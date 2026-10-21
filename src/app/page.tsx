@@ -1,9 +1,9 @@
 import { prisma } from "@/lib/prisma";
-import { POSClient } from "@/components/pos/POSClient";
+import { UnifiedAppShell } from "@/components/dashboard/DashboardView";
 
 export const dynamic = "force-dynamic";
 
-export default async function POSPage() {
+export default async function HomePage() {
   const [products, categories, customers] = await Promise.all([
     prisma.product.findMany({
       where: { isActive: true },
@@ -49,7 +49,7 @@ export default async function POSPage() {
   }));
 
   return (
-    <POSClient
+    <UnifiedAppShell
       initialProducts={serializedProducts}
       initialCategories={serializedCategories}
       initialCustomers={serializedCustomers}
