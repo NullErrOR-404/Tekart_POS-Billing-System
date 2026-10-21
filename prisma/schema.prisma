@@ -1,0 +1,315 @@
+// Prisma Schema for Tekart Retail POS & Inventory Management System
+// Target Database: Neon PostgreSQL ('tekart_pos' on AWS us-east-2)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// -----------------------------------------------------------------------------
+// 1. Authentication & Users
+// -----------------------------------------------------------------------------
+model User {
+  id           String          @id @default(uuid())
+  name         String
+  username     String          @unique
+  passwordHash String
+  pinHash      String?         // 4-digit PIN for quick POS unlock
+  role         String          @default("cashier") // "owner" | "cashier" | "manager"
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  invoices     Invoice[]
+  shifts       RegisterShift[]
+  returns      Return[]
+
+  @@map("users")
+}
+
+// -----------------------------------------------------------------------------
+// 2. Categories, Products & Multi-Attribute Variants
+// -----------------------------------------------------------------------------
+model Category {
+  id             String    @id @default(uuid())
+  name           String    @unique // Electronics, Cosmetics, Perfumes & Deodorants, Accessories
+  defaultGstRate Decimal   @default(18.00) @db.Decimal(5, 2)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  products       Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id          String           @id @default(uuid())
+  categoryId  String
+  category    Category         @relation(fields: [categoryId], references: [id])
+  name        String
+  brand       String?
+  description String?
+  imageUrl    String?
+  aiAltText   String?          // Generated semantic alt text from AI stock-in
+  hasVariants Boolean          @default(false)
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  variants     ProductVariant[]
+  invoiceItems InvoiceLineItem[]
+  purchaseItems PurchaseItem[]
+  adjustments  StockAdjustment[]
+
+  @@map("products")
+}
+
+model ProductVariant {
+  id                String            @id @default(uuid())
+  productId         String
+  product           Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variantName       String            // e.g. "50ml", "Shade 01 Red", "Size L", "Default"
+  attributeType     String            @default("standard") // "volume" | "color" | "size" | "standard"
+  costPrice         Decimal           @default(0.00) @db.Decimal(10, 2)
+  sellingPrice      Decimal           @db.Decimal(10, 2) // MRP
+  stockQuantity     Int               @default(0)
+  lowStockThreshold Int               @default(5)
+  batchNumber       String?
+  expiryDate        DateTime?
+  barcode           String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  invoiceItems  InvoiceLineItem[]
+  purchaseItems PurchaseItem[]
+  adjustments   StockAdjustment[]
+
+  @@map("product_variants")
+}
+
+// -----------------------------------------------------------------------------
+// 3. Customer Relationship & Loyalty Engine
+// -----------------------------------------------------------------------------
+model Customer {
+  id            String    @id @default(uuid())
+  name          String
+  mobile        String    @unique
+  whatsapp      String
+  loyaltyPoints Int       @default(0) // 1 pt per ₹10 spent, 10 pts = ₹1 discount
+  totalSpend    Decimal   @default(0.00) @db.Decimal(12, 2)
+  visitCount    Int       @default(0)
+  lastVisitAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  invoices      Invoice[]
+  returns       Return[]
+
+  @@map("customers")
+}
+
+// -----------------------------------------------------------------------------
+// 4. POS Register Shifts & Cash Reconciliation
+// -----------------------------------------------------------------------------
+model RegisterShift {
+  id                 String    @id @default(uuid())
+  userId             String
+  user               User      @relation(fields: [userId], references: [id])
+  openingTime        DateTime  @default(now())
+  closingTime        DateTime?
+  openingFloat       Decimal   @default(0.00) @db.Decimal(10, 2)
+  totalCashSales     Decimal   @default(0.00) @db.Decimal(10, 2)
+  totalUpiSales      Decimal   @default(0.00) @db.Decimal(10, 2)
+  totalCardSales     Decimal   @default(0.00) @db.Decimal(10, 2)
+  totalCashExpenses  Decimal   @default(0.00) @db.Decimal(10, 2)
+  expectedCash       Decimal   @default(0.00) @db.Decimal(10, 2)
+  actualCash         Decimal?  @db.Decimal(10, 2) // Blind cash drop count
+  denominationJson   String?   // JSON string storing currency breakdown
+  status             String    @default("OPEN") // "OPEN" | "CLOSED"
+  createdAt          DateTime  @default(now())
+
+  invoices           Invoice[]
+  expenses           Expense[]
+
+  @@map("register_shifts")
+}
+
+// -----------------------------------------------------------------------------
+// 5. Invoicing & Split-Tender Checkout
+// -----------------------------------------------------------------------------
+model Invoice {
+  id                   String            @id @default(uuid())
+  invoiceNumber        String            @unique // e.g. "TK-2026-0001"
+  customerId           String?
+  customer             Customer?         @relation(fields: [customerId], references: [id])
+  userId               String
+  user                 User              @relation(fields: [userId], references: [id])
+  shiftId              String?
+  shift                RegisterShift?    @relation(fields: [shiftId], references: [id])
+  subtotal             Decimal           @db.Decimal(10, 2)
+  discountAmount       Decimal           @default(0.00) @db.Decimal(10, 2)
+  taxAmount            Decimal           @default(0.00) @db.Decimal(10, 2)
+  totalAmount          Decimal           @db.Decimal(10, 2)
+  paymentMethod        String            // "CASH" | "UPI" | "CARD" | "SPLIT"
+  splitCashAmount      Decimal           @default(0.00) @db.Decimal(10, 2)
+  splitUpiAmount       Decimal           @default(0.00) @db.Decimal(10, 2)
+  pointsEarned         Int               @default(0)
+  pointsRedeemed       Int               @default(0)
+  pointsDiscountAmount Decimal           @default(0.00) @db.Decimal(10, 2)
+  status               String            @default("PAID") // "PAID" | "RETURNED" | "PARTIALLY_RETURNED"
+  whatsappSent         Boolean           @default(false)
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  items                InvoiceLineItem[]
+  returns              Return[]
+
+  @@map("invoices")
+}
+
+model InvoiceLineItem {
+  id             String          @id @default(uuid())
+  invoiceId      String
+  invoice        Invoice         @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  productId      String
+  product        Product         @relation(fields: [productId], references: [id])
+  variantId      String
+  variant        ProductVariant  @relation(fields: [variantId], references: [id])
+  itemName       String
+  variantName    String
+  quantity       Int
+  unitPrice      Decimal         @db.Decimal(10, 2) // Historical selling price snapshot
+  costPrice      Decimal         @db.Decimal(10, 2) // Historical cost price snapshot
+  discountAmount Decimal         @default(0.00) @db.Decimal(10, 2)
+  gstRate        Decimal         @default(0.00) @db.Decimal(5, 2)
+  gstAmount      Decimal         @default(0.00) @db.Decimal(10, 2)
+  lineTotal      Decimal         @db.Decimal(10, 2)
+  isReturned     Boolean         @default(false)
+  returnedQty    Int             @default(0)
+  returnedAt     DateTime?
+
+  returnItems    ReturnItem[]
+
+  @@map("invoice_line_items")
+}
+
+// -----------------------------------------------------------------------------
+// 6. 7-Day Returns & Credit Notes
+// -----------------------------------------------------------------------------
+model Return {
+  id                String          @id @default(uuid())
+  returnNumber      String          @unique // e.g. "RTN-1008"
+  invoiceId         String
+  invoice           Invoice         @relation(fields: [invoiceId], references: [id])
+  customerId        String?
+  customer          Customer?       @relation(fields: [customerId], references: [id])
+  userId            String
+  user              User            @relation(fields: [userId], references: [id])
+  totalRefundAmount Decimal         @db.Decimal(10, 2)
+  refundMethod      String          // "CASH" | "UPI" | "STORE_CREDIT"
+  reason            String
+  createdAt         DateTime        @default(now())
+
+  items             ReturnItem[]
+
+  @@map("returns")
+}
+
+model ReturnItem {
+  id           String          @id @default(uuid())
+  returnId     String
+  returnRecord Return          @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  lineItemId   String
+  lineItem     InvoiceLineItem @relation(fields: [lineItemId], references: [id])
+  quantity     Int
+  refundAmount Decimal         @db.Decimal(10, 2) // Enforced historical price
+  restocked    Boolean         @default(true)
+
+  @@map("return_items")
+}
+
+// -----------------------------------------------------------------------------
+// 7. Store Expenses (Petty Cash)
+// -----------------------------------------------------------------------------
+model Expense {
+  id          String         @id @default(uuid())
+  shiftId     String?
+  shift       RegisterShift? @relation(fields: [shiftId], references: [id])
+  category    String         // "TEA" | "TRANSPORT" | "UTILITY" | "PACKAGING" | "MISC"
+  amount      Decimal        @db.Decimal(10, 2)
+  paymentMode String         @default("CASH") // "CASH" | "UPI"
+  note        String
+  createdAt   DateTime       @default(now())
+
+  @@map("expenses")
+}
+
+// -----------------------------------------------------------------------------
+// 8. Suppliers & Stock-In Purchases (Upfront Paid)
+// -----------------------------------------------------------------------------
+model Supplier {
+  id        String     @id @default(uuid())
+  name      String
+  phone     String
+  email     String?
+  address   String?
+  gstin     String?
+  createdAt DateTime   @default(now())
+
+  purchases Purchase[]
+
+  @@map("suppliers")
+}
+
+model Purchase {
+  id            String         @id @default(uuid())
+  supplierId    String
+  supplier      Supplier       @relation(fields: [supplierId], references: [id])
+  invoiceNumber String
+  purchaseDate  DateTime
+  totalAmount   Decimal        @db.Decimal(10, 2)
+  paymentMethod String         @default("BANK") // "CASH" | "UPI" | "BANK"
+  notes         String?
+  createdAt     DateTime       @default(now())
+
+  items         PurchaseItem[]
+
+  @@map("purchases")
+}
+
+model PurchaseItem {
+  id         String         @id @default(uuid())
+  purchaseId String
+  purchase   Purchase       @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product        @relation(fields: [productId], references: [id])
+  variantId  String
+  variant    ProductVariant @relation(fields: [variantId], references: [id])
+  quantity   Int
+  unitCost   Decimal        @db.Decimal(10, 2)
+  unitMrp    Decimal        @db.Decimal(10, 2)
+  totalCost  Decimal        @db.Decimal(10, 2)
+
+  @@map("purchase_items")
+}
+
+// -----------------------------------------------------------------------------
+// 9. Manual Stock Adjustments (Testers, Damages, Expiry)
+// -----------------------------------------------------------------------------
+model StockAdjustment {
+  id             String         @id @default(uuid())
+  productId      String
+  product        Product        @relation(fields: [productId], references: [id])
+  variantId      String
+  variant        ProductVariant @relation(fields: [variantId], references: [id])
+  adjustmentType String         // "TESTER" | "DAMAGED" | "EXPIRED" | "AUDIT_CORRECTION"
+  quantity       Int            // negative integer e.g. -1
+  reason         String
+  createdAt      DateTime       @default(now())
+
+  @@map("stock_adjustments")
+}
