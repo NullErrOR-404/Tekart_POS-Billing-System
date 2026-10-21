@@ -1,0 +1,55 @@
+@import url('https://api.fontshare.com/v2/css?f[]=satoshi@500,600,700&f[]=general-sans@400,500,600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+@import "../styles/design-tokens.css";
+
+@layer base {
+  * {
+    border-color: var(--border-subtle);
+  }
+  
+  html {
+    font-family: var(--font-body);
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    touch-action: manipulation;
+  }
+
+  body {
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+
+  .font-mono-numbers {
+    font-family: var(--font-mono);
+    font-feature-settings: "tnum" 1, "zero" 1;
+  }
+}
+
+/* Lenis Recommended CSS for Smooth Scroll */
+html.lenis, html.lenis body {
+  height: auto;
+}
+
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
+.lenis.lenis-scrolling iframe {
+  pointer-events: none;
+}
